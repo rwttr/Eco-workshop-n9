@@ -58,6 +58,7 @@ connection around every pair of convolutions.
 
 ```mermaid
 flowchart TD
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     X["input<br/>4 x 3 x 224 x 224"] --> C1["conv1 - 7x7, 64, stride 2<br/>bn1 + relu<br/>64 x 112 x 112"]
     C1 --> MP["maxpool - 3x3, stride 2<br/>64 x 56 x 56"]
     MP --> L1["layer1 - 2x BasicBlock, 64 ch<br/>0.15 M params"]
@@ -71,6 +72,7 @@ The residual shortcut inside every `BasicBlock`:
 
 ```mermaid
 flowchart LR
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     I["x"] --> A["conv 3x3 + bn + relu"] --> B["conv 3x3 + bn"] --> S(("+"))
     I -->|"identity, or 1x1 conv when stride 2"| S
     S --> R["relu"] --> OUT["out"]
@@ -102,6 +104,7 @@ vision architectures:
 
 ```mermaid
 flowchart TD
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     X["input<br/>4 x 3 x 224 x 224"] --> S["conv 3x3, stride 2, 16 ch<br/>BatchNorm + Hardswish"]
     S --> B["11 x InvertedResidual<br/>16 to 96 channels<br/>five carry Squeeze-Excite"]
     B --> H["conv 1x1 to 576 ch<br/>BatchNorm + Hardswish"]
@@ -114,6 +117,7 @@ One `InvertedResidual` block, where the cost lives:
 
 ```mermaid
 flowchart TD
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     I["x - C channels"] --> E["expand - 1x1 conv to C times t<br/>BatchNorm + activation"]
     E --> D["DEPTHWISE conv 3x3 or 5x5<br/>groups = C times t<br/>one filter per channel"]
     D --> SE["Squeeze-Excite<br/>global pool, two 1x1 convs<br/>Hardsigmoid gate"]
@@ -160,6 +164,7 @@ are applied.
 
 ```mermaid
 flowchart TD
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     X["input<br/>4 x 3 x 224 x 224"] --> PE["patch_embed<br/>Conv2d 16x16, stride 16<br/>196 tokens x 192 dim"]
     PE --> TK["prepend CLS token<br/>add positional embedding<br/>197 x 192"]
     TK --> B0["blocks.0"] --> B1["blocks.1"] --> BD["..."] --> B5["blocks.5"]
@@ -171,6 +176,7 @@ One `ViTBlock`, with two residual branches:
 
 ```mermaid
 flowchart TD
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     X["x - 197 x 192"] --> N1["LayerNorm"]
     N1 --> AT["Attention<br/>qkv - Linear 192 to 576<br/>scaled_dot_product_attention, 3 heads<br/>proj - Linear 192 to 192"]
     AT --> S1(("+"))
@@ -203,6 +209,7 @@ input, giving attention-like expressiveness at O(L) rather than O(L²) cost — 
 
 ```mermaid
 flowchart TD
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     X["input<br/>4 x 3 x 64 x 64"] --> PE["patch_embed<br/>Conv2d 8x8, stride 8<br/>64 tokens x 96 dim"]
     PE --> PS["add positional embedding"]
     PS --> B0["blocks.0"] --> B1["blocks.1"] --> B2["blocks.2"] --> B3["blocks.3"]
@@ -215,6 +222,7 @@ lies:
 
 ```mermaid
 flowchart TD
+    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
     IN["x - B x 64 x 96"] --> IP["in_proj - Linear 96 to 192"]
     IP --> SP{"split into u and z"}
     SP -->|"u"| CV["depthwise Conv1d, k=3"] --> SI["SiLU"] --> XP["x_proj - Linear 96 to 33"]
