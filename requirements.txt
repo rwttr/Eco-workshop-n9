@@ -1,0 +1,22 @@
+# PyTorch Performance Workshops - 241-353 AI Ecosystem
+# Covers both the profiler and the benchmark notebook.
+# CPU-only; no CUDA wheels needed. Tested on macOS 26 (Apple M3) + Python 3.13.
+torch>=2.6
+torchvision>=0.21
+jupyterlab>=4.0
+ipykernel
+ipywidgets
+pandas>=2.0
+matplotlib>=3.8
+
+# Trace analysis (Part 5 of the profiler notebook, Part 7.4 of the benchmark notebook).
+# Optional: both notebooks detect its absence and skip those cells cleanly.
+HolisticTraceAnalysis
+
+# Optional: enables the C++ Timer demo in the benchmark notebook (Part 7.2).
+# Also needs a C++ toolchain (Xcode Command Line Tools on macOS).
+ninja
+
+# Optional: only needed to regenerate the README screenshots via make_screenshots.py.
+# Also run: python -m playwright install chromium
+playwright
