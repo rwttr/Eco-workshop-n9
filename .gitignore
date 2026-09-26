@@ -14,3 +14,7 @@ venv/
 
 # OS
 .DS_Store
+
+# Editor preferences (local only - the white Markdown preview stylesheet).
+# Remove this block if you want students to get the same preview settings.
+.vscode/
