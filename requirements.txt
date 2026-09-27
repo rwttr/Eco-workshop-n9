@@ -17,6 +17,6 @@ HolisticTraceAnalysis
 # Also needs a C++ toolchain (Xcode Command Line Tools on macOS).
 ninja
 
-# Optional: only needed to regenerate the README screenshots via make_screenshots.py.
+# Optional: only needed to regenerate the docs/ screenshots via make_screenshots.py.
 # Also run: python -m playwright install chromium
 playwright

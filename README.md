@@ -21,28 +21,12 @@ operators* changed. Both notebooks end with [trace analysis](docs/trace-analysis
 
 Studying without an instructor? Follow the **[self-study guide](docs/self-study-guide.md)**.
 
-## The tools
+## Tools
 
-<table>
-<tr>
-<td width="50%"><b><code>torch.profiler</code></b>: per-operator self and total time</td>
-<td width="50%"><b><code>torch.utils.benchmark</code></b>: medians, IQR and <code>Compare</code> tables</td>
-</tr>
-<tr>
-<td><img src="docs/profiler_table.png" alt="torch.profiler key_averages table"></td>
-<td><img src="docs/benchmark_compare.png" alt="torch.utils.benchmark Compare table"></td>
-</tr>
-<tr>
-<td><b>Perfetto</b>: the trace as a timeline</td>
-<td><b>Holistic Trace Analysis</b>: traces as DataFrames, and <code>TraceDiff</code></td>
-</tr>
-<tr>
-<td><img src="docs/perfetto_overview.png" alt="PyTorch trace in the Perfetto UI"></td>
-<td><img src="docs/hta_analysis.png" alt="Holistic Trace Analysis output"></td>
-</tr>
-</table>
-
-Screenshots are from real workshop runs; `python make_screenshots.py` regenerates them.
+[`torch.profiler`](https://docs.pytorch.org/docs/stable/profiler.html) ·
+[`torch.utils.benchmark`](https://docs.pytorch.org/docs/stable/benchmark_utils.html) ·
+[Perfetto](https://ui.perfetto.dev) ·
+[Holistic Trace Analysis](https://github.com/facebookresearch/HolisticTraceAnalysis)
 
 ## Setup
 

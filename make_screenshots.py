@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the screenshots used in README.md and docs/trace-analysis.md.
+"""Regenerate the viewer screenshots used in docs/trace-analysis.md.
 
 Captures real screenshots - nothing here is a mock-up:
 
@@ -8,10 +8,6 @@ Captures real screenshots - nothing here is a mock-up:
   docs/hta_analysis.png        Holistic Trace Analysis output, rendered from the
                                executed profiler notebook
   docs/chrome_trace_table.png  the dependency-free Chrome-Trace parser's output
-  docs/profiler_table.png      a torch.profiler key_averages() table, from the
-                               executed profiler notebook
-  docs/benchmark_compare.png   a torch.utils.benchmark Compare table, from the
-                               executed benchmark notebook
 
 Run the notebooks first (they write the traces this script needs), then:
 
@@ -161,24 +157,6 @@ def main():
         keys=["ops = chrome_trace_ops(base_file", "ref.merge"],
         title="## The same trace, parsed with `json` + `pandas` only\n"
               "*cells from `pytorch_profiler_workshop.ipynb`, Part 5.2*")
-
-    print("torch.profiler table:")
-    shoot_notebook_cells(
-        nb, DOCS / "profiler_table.png",
-        keys=['key_averages().table(sort_by="self_cpu_time_total", row_limit=8)'],
-        title="## `torch.profiler`: where the time goes\n"
-              "*cell from `pytorch_profiler_workshop.ipynb`, Part 1.1*")
-
-    bnb = ROOT / "pytorch_benchmark_workshop_executed.ipynb"
-    if not bnb.exists():
-        bnb = ROOT / "pytorch_benchmark_workshop.ipynb"
-
-    print("torch.utils.benchmark Compare:")
-    shoot_notebook_cells(
-        bnb, DOCS / "benchmark_compare.png",
-        keys=['label="Forward pass, batch 4"'],
-        title="## `torch.utils.benchmark`: how much time, with error bars\n"
-              "*cell from `pytorch_benchmark_workshop.ipynb`, Part 5*")
 
     print("\nDone. Screenshots in docs/")
 
