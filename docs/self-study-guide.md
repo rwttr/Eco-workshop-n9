@@ -100,17 +100,17 @@ not a bug: nesting is counted more than once. Only self times sum to the runtime
 **Goal.** Explain why parameter count predicts latency badly, and tell from a profile
 whether a model is limited by arithmetic or by operator dispatch.
 
-**Work through.** Notebook 1, §2.1–§2.5. Don't skip the diagrams in §2.2.1–§2.2.4; the
+**Work through.** Notebook 1, §2.1–§2.5. Don't skip the diagrams in §2.2.1–§2.2.3; the
 operator-mix results are hard to read without knowing each model's shape.
 
-**Look for.** §2.2.7 prints `params_%` and `time_%` side by side for ResNet-18: read them
+**Look for.** §2.2.6 prints `params_%` and `time_%` side by side for ResNet-18: read them
 against each other. §2.4 computes mean µs per operator call, the diagnostic all of Part 2
 rests on.
 
 **Checkpoint.**
 
 <details>
-<summary>1. Before running §2.2.7: which ResNet-18 layer holds the most parameters, and which takes the most time?</summary>
+<summary>1. Before running §2.2.6: which ResNet-18 layer holds the most parameters, and which takes the most time?</summary>
 
 `layer4` holds ~72% of the parameters, and most people answer `layer4` to both. It takes
 only ~17% of the time. `conv1` + `maxpool` hold ~0% of the parameters but ~29% of the time,
@@ -120,15 +120,14 @@ Parameters predict memory. Activation sizes predict time.
 </details>
 
 <details>
-<summary>2. Rank all four models by latency, before running §2.2.8.</summary>
+<summary>2. Rank the three models by latency, before running §2.2.7.</summary>
 
-Ranking by parameters (11.7 M, 2.5 M, 2.9 M, 0.16 M) gets it wrong; so does ranking by FLOPs.
-Measured on the reference machine: ViT-Tiny ~10 ms, VisionMamba-Tiny ~21 ms, ResNet-18
-~36 ms, **MobileNetV3-Small ~91 ms**.
+Parameters (11.7 M, 2.9 M, 2.5 M) and FLOPs (14.5, 4.4, 0.45 G) agree: ResNet-18, then
+ViT-Tiny, then MobileNetV3-Small. Latency does not. Measured on the reference machine:
+ViT-Tiny ~10 ms, ResNet-18 ~36 ms, **MobileNetV3-Small ~91 ms**.
 
-Two results stand out. MobileNetV3-Small does ~32× less arithmetic than ResNet-18 on the
-same input and takes ~2.5× longer. VisionMamba-Tiny has ~70× fewer parameters than ResNet-18
-and sees 12× fewer pixels, yet takes ~2× as long as ViT-Tiny.
+MobileNetV3-Small does ~32× less arithmetic than ResNet-18 on the same input and takes
+~2.5× longer: it goes from cheapest on paper to slowest on the clock.
 </details>
 
 <details>
@@ -149,22 +148,21 @@ wrong hardware.
 </details>
 
 <details>
-<summary>4. VisionMamba and MobileNetV3-Small average 1–2 µs of work per operator call; ResNet and ViT average 15–90 µs. What does that tell you, and what follows?</summary>
+<summary>4. MobileNetV3-Small averages ~2 µs of work per operator call; ResNet-18 and ViT-Tiny average 15–70 µs. What does that tell you, and what follows?</summary>
 
-PyTorch's dispatch and allocation overhead is ~1–3 µs per operator. At 1–2 µs of work per
+PyTorch's dispatch and allocation overhead is ~1–3 µs per operator. At ~2 µs of work per
 call, a model spends most of its time in the framework: it is **overhead-bound**. Faster
 arithmetic won't help; issue fewer, larger ops. At tens of µs per call a model is
 **compute-bound**, and the arithmetic, kernel or dtype is worth attention.
 
-The two overhead-bound models get there differently: VisionMamba through a Python loop you
-can see and edit, MobileNetV3-Small through a kernel decomposition below the architecture.
-One column classifies both; finding the cause still takes the operator table.
+The column classifies the model, but it does not name the cause. For MobileNetV3-Small that
+takes the operator table: the cause is a kernel decomposition below the architecture, not
+anything visible in the model code.
 </details>
 
-**Common confusion.** Module count is not operator count. VisionMamba-Tiny has the fewest
-leaf modules and issues ~27,000 operator calls, because one `S6Naive` module loops over 64
-timesteps in Python. MobileNetV3-Small has the most leaf modules and issues ~41,000 calls,
-for an unrelated reason. Neither shows up in a module census.
+**Common confusion.** Module count is not operator count. MobileNetV3-Small has the most
+leaf modules, but its ~41,000 operator calls come from 11 depthwise layers splitting into one
+call per channel, which no module census shows.
 
 ---
 
@@ -181,23 +179,24 @@ important cell in Part 2; read the operator table, not just the wall-clock numbe
 **Checkpoint.**
 
 <details>
-<summary>1. The <code>S6Fast</code> rewrite cuts total operator calls by only ~10%, yet is ~1.35× faster. How?</summary>
+<summary>1. Fused attention cuts ViT-Tiny's operator calls by ~70%, yet inference is only ~1.2× faster. Why don't the two ratios match?</summary>
 
-Total op count is the wrong measure. The diff shows `aten::exp` falling from ~260 calls to 8,
-and `aten::matmul` from 264 to 8, because `dA` and `dBu` are computed for all timesteps at
-once instead of per iteration. The same exponentials are computed; what vanished is ~250
-dispatcher round-trips and ~250 allocations. The remaining calls are mostly cheap indexing
-such as `aten::select`.
+Most of the ops that disappeared were cheap: indexing, views and reshapes that cost well
+under a microsecond each. The diff shows where the time actually went: `aten::bmm` and
+`aten::_softmax`, the two score-matrix multiplies and the softmax between them, are gone,
+along with most of the `aten::copy_` calls around them. In their place is one
+`aten::_scaled_dot_product_flash_attention_for_cpu` per block, which still does the
+arithmetic.
 
-The principle is not "fewer operations" but "expensive operations replaced by fewer, larger
-ones".
+The principle is not "fewer operations" but "a chain of small ops and their intermediate
+tensors replaced by one larger op".
 </details>
 
 <details>
 <summary>2. bfloat16 autocast makes ResNet-18 ~20× slower here. Propose a fix from that number alone, then check it against the profiler table.</summary>
 
 The usual guess is to avoid repeated casts, e.g. convert weights once. The table shows that
-won't help: the extra time is inside `aten::_slow_conv2d_forward` (~22 ms → ~110 ms), not in
+won't help: the extra time is inside `aten::_slow_conv2d_forward` (~22 ms → ~700 ms), not in
 `aten::to` or `aten::_to_copy`. There is no fast bfloat16 conv kernel for this hardware, so it
 falls back to a slow reference path. Abandon the optimisation on this platform; don't refine it.
 
@@ -245,20 +244,19 @@ is still low after adding workers, the dataset is too slow and `__getitem__` nee
 </details>
 
 <details>
-<summary>3. <code>S6Fast</code> was clearly faster for inference. Why is it slower in training?</summary>
+<summary>3. Fused attention was ~1.2× faster for inference. Why is its training speed-up smaller, and what does it still win?</summary>
 
-It precomputes `dA` and `dBu` as full `(B, L, D, N)` tensors. Under `inference_mode` they are
-transient: built, used, freed. Under autograd they become saved activations: they must live
-until backward, be differentiated through, and they are far larger than the naive version's
-per-step slices. Result: ~55 ms per step vs 48 ms, with ~4.5× the memory.
+Compare `fwd_ms` and `bwd_ms` in §3.5: fusion speeds up the forward pass, but the backward
+pass costs about the same either way, so a full step gains less (~23 vs ~25 ms). What it
+still wins is memory: 183 vs 260 MB allocated. The hand-written version saves every
+`197 × 197` score matrix and softmax for backward; the fused kernel does not.
 
-Materialising large intermediates to save dispatcher calls bets they are short-lived, and
-autograd voids that bet.
+An optimisation's payoff depends on the mode. Profile the one you ship.
 </details>
 
 **Common confusion.** "Backward costs 2× forward" is a rule of thumb. Measured ratios here
-range ~1.3–2.1, and `S6Fast` hits 3.0. Read your own number; a ratio well above 2 means the
-backward graph has something worth investigating, as with `S6Fast`.
+range ~1.3–1.9. Read your own number; a ratio well above 2 means the backward graph has
+something worth investigating.
 
 ---
 

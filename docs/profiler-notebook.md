@@ -37,15 +37,15 @@ Each is demonstrated with runnable code.
 - `export_memory_timeline()` and its deprecation in torch 2.14
 - `torch.mps.profiler`, and the absence of `ProfilerActivity.MPS`
 - **Forward hooks as instruments**: auto-generated `record_function` labels for every layer
-  (§2.2.7) give a per-layer breakdown of a model you did not write
+  (§2.2.6) give a per-layer breakdown of a model you did not write
 - Trace export and analysis ([trace-analysis.md](trace-analysis.md))
 
 ## Architecture reference (§2.2)
 
 Before profiling, each model is shown three ways (full notes in [models.md](models.md)):
 
-1. **Mermaid diagrams**, including detail views of the ResNet `BasicBlock`, the `ViTBlock` and
-   the Mamba `S6` mixer, whose sequential scan is drawn as a self-edge.
+1. **Mermaid diagrams**, including detail views of the ResNet `BasicBlock`, the MobileNet
+   `InvertedResidual` block and the `ViTBlock`.
 2. **Layer tables** from forward hooks (`layer_table()`): name, type, output shape, parameters.
 3. **Structure plus measured cost** (`structure_and_cost()`): the same table with `time_ms` and
    `time_%`. Key result: ResNet-18's `layer4` holds **72% of the parameters but ~17% of the
@@ -65,20 +65,24 @@ Absolute timings vary by machine; these relationships should not.
 3. **MobileNetV3-Small: ~32× less arithmetic than ResNet-18, ~2.5× slower.** Its 52 conv layers
    make ~2,400 conv kernel calls because the 11 depthwise ones run one call per channel. It
    achieves ~5 GFLOP/s vs ResNet-18's 340.
-4. **A `MambaBlock` has ~13× fewer parameters than a `ViTBlock` yet takes several times
-   longer** (§2.2.7). The architecture table can't explain this; the profiler can.
-5. **VisionMamba averages ~1 µs of work per operator call; ResNet ~70 µs.** That one figure
-   classifies a model as overhead-bound or compute-bound.
-6. **Hoisting loop-invariant work out of the scan cuts `aten::exp` from ~260 calls to 8** and
-   speeds inference ~1.3×, with identical arithmetic and bit-identical output.
+4. **ViT-Tiny's six identical blocks take near-identical time** (§2.2.6), so their spread is
+   a direct reading of measurement noise for per-layer tables.
+5. **MobileNetV3-Small averages ~2 µs of work per operator call; ResNet-18 ~70 µs.** That one
+   figure classifies a model as overhead-bound or compute-bound.
+6. **Fusing attention cuts ViT-Tiny's operator calls by ~70% (~2,100 → ~630) and speeds
+   inference ~1.2×**, with the same weights and the same output to ~1e-6. The per-op diff
+   shows `aten::bmm` and `aten::_softmax` gone and one fused SDPA call per block in their
+   place; `record_shapes` shows each softmax input is a full `(4, 3, 197, 197)` score matrix.
 7. **bfloat16 autocast on Apple Silicon CPU is ~20× slower.** The extra cost is in the conv
    kernel, not the casts, so removing casts would not help. An optimisation is a hypothesis;
    the profiler tests it.
 8. **With gradients enabled, a forward pass retains ~165 MB; `inference_mode` retains none.**
    Those are saved activations, the main reason memory limits batch size.
-9. **`S6Fast` makes training slower** (~55 ms vs 48 ms) with 4.5× the memory, because its
-   precomputed tensors become saved activations. Inference wins don't transfer automatically.
-10. **The first MPS call takes ~10× steady-state time** (Metal pipeline compilation) vs ~1.1×
+9. **In training, fused attention's speed gain shrinks but its memory saving stays**: ~23 vs
+   ~25 ms per step, 183 vs 260 MB allocated. The backward pass costs about the same either
+   way, and the score matrices are no longer saved for it. An optimisation pays off
+   differently in each mode.
+10. **The first MPS call takes 10–25× steady-state time** (Metal pipeline compilation) vs ~1×
     for CPU eager. How much warmup matters depends on the backend.
 
 ## References

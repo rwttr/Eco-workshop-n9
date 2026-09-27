@@ -47,32 +47,22 @@ python -m ipykernel install --user --name ws_eco --display-name "Python (ws_eco)
 Run each notebook top to bottom. Optional extras, skipped cleanly when absent:
 `HolisticTraceAnalysis` (trace diffing), `ninja` (C++ timer), `playwright` (screenshots).
 
-## The four models
+## The models
 
-Each model breaks a *different* naive prediction of performance. Both notebooks use the same
-four, so results carry over. Details in [docs/models.md](docs/models.md).
+The focus is the tools, so the models are small and few: three, shared by both notebooks.
+Details in [docs/models.md](docs/models.md).
 
-| Model | Family | Params | Breaks the prediction that… |
+| Model | Family | Params | Role |
 |---|---|---|---|
-| **ResNet-18** | CNN (2015), `torchvision` | 11.7 M | — (baseline) |
-| **MobileNetV3-Small** | Efficiency CNN (2019), `torchvision` | 2.5 M | …fewer FLOPs means less time |
-| **ViT-Tiny** | Vision Transformer (2020), in-repo | 2.9 M | …attention is inherently expensive |
-| **VisionMamba-Tiny** | Selective state-space model (2024), in-repo | 0.16 M | …fewer parameters means faster |
-
-Two headline results:
-
-- **MobileNetV3-Small does ~32× less arithmetic than ResNet-18 and takes ~2.5× longer.** Its
-  depthwise convolutions have no fused CPU kernel and split into hundreds of single-channel calls.
-- **VisionMamba-Tiny has ~70× fewer parameters than ResNet-18 and sees 12× fewer pixels, yet
-  takes ~2× as long as ViT-Tiny.**
-
-Neither parameter nor FLOP count predicts these results. One profiler column does.
+| **ResNet-18** | CNN (2015), `torchvision` | 11.7 M | Compute-bound baseline |
+| **MobileNetV3-Small** | Efficiency CNN (2019), `torchvision` | 2.5 M | Overhead-bound: ~32× less arithmetic than ResNet-18, yet ~2.5× slower on CPU |
+| **ViT-Tiny** | Vision Transformer (2020), in-repo | 2.9 M | Fastest of the three; its fused vs hand-written attention is the A/B pair for every before/after demo |
 
 ## Docs
 
 | Document | Contents |
 |---|---|
-| [models.md](docs/models.md) | The four architectures: diagrams, measured comparison, what each teaches |
+| [models.md](docs/models.md) | The three architectures: diagrams, measured comparison, what each is used for |
 | [profiler-notebook.md](docs/profiler-notebook.md) | Notebook 1: parts, features, findings |
 | [benchmark-notebook.md](docs/benchmark-notebook.md) | Notebook 2: parts, features, findings |
 | [trace-analysis.md](docs/trace-analysis.md) | Perfetto, HTA and manual parsing, with screenshots |
@@ -85,7 +75,7 @@ Neither parameter nor FLOP count predicts these results. One profiler column doe
 |---|---|
 | `pytorch_*_workshop.ipynb` | The notebooks, outputs cleared |
 | `*_executed.ipynb` | Reference copies with all outputs |
-| `ws_models.py` | `TinyViT`, `TinyVisionMamba`, `S6Naive`/`S6Fast`. Notebook 2 imports these; notebook 1 builds them inline as part of the lesson |
+| `ws_models.py` | `TinyViT`, with fused or hand-written attention. Notebook 2 imports it; notebook 1 builds it inline as part of the lesson |
 | `ws_trace.py` | Trace helpers: `capture_trace()`, `chrome_trace_ops()`, `add_rank()`, `quiet_hta()`, `HTA_ON_CPU` |
 | `make_screenshots.py` | Regenerates the `docs/` screenshots in a headless browser |
 | `requirements.txt` | Dependencies, optional ones marked |
@@ -96,7 +86,6 @@ Neither parameter nor FLOP count predicts these results. One profiler column doe
 - [PyTorch Benchmark recipe](https://docs.pytorch.org/tutorials/recipes/recipes/benchmark.html) · [`torch.utils.benchmark` API](https://docs.pytorch.org/docs/stable/benchmark_utils.html)
 - [Perfetto UI](https://ui.perfetto.dev) · [Holistic Trace Analysis](https://github.com/facebookresearch/HolisticTraceAnalysis) · [FlameGraph](https://github.com/brendangregg/FlameGraph)
 - Dosovitskiy et al., *An Image is Worth 16x16 Words* (2020) — ViT
-- Gu & Dao, *Mamba: Linear-Time Sequence Modeling with Selective State Spaces* (2023)
 
 ---
 

@@ -95,8 +95,8 @@ The notebooks write `profiler_out/traces/` and `benchmark_out/traces/`. Drag any
 `.pt.trace.json` into <https://ui.perfetto.dev>; it runs locally and nothing is uploaded.
 Click an operator to inspect it; drag to select a range for aggregate stats.
 
-> Operator-heavy models make big traces: the naive Mamba scan emits ~27,000 events per forward
-> pass, so three steps is ~30 MB. The notebooks use `active=1` for those.
+> Operator-heavy models make big traces: MobileNetV3-Small emits ~41,000 events per forward
+> pass. Keep `active` small (the notebook 2 diff uses `active=1`) when tracing models like that.
 
 ## References
 

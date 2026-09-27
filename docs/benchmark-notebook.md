@@ -30,8 +30,8 @@
 - `collect_callgrind()` for deterministic instruction counts (Linux only; guarded)
 - Two reusable helpers: `ab_compare()`, which refuses to report differences within noise, and
   `assert_not_slower()`, a regression gate that widens its tolerance on a noisy machine
-- **Link to notebook 1**: trace the A and B variants, then diff them with HTA `TraceDiff` and
-  a dependency-free Chrome Trace diff ([trace-analysis.md](trace-analysis.md))
+- **Link to notebook 1**: trace fused and hand-written ViT attention, then diff them with HTA
+  `TraceDiff` and a dependency-free Chrome Trace diff ([trace-analysis.md](trace-analysis.md))
 
 ## Findings expected to reproduce
 
@@ -40,8 +40,10 @@
    via `torch.accelerator.synchronize()`.
 2. **The null experiment.** Benchmarking the same work twice shows a 5–10% "change". That is
    the noise floor; claims below it mean nothing.
-3. **Autograd context cost scales with operator density.** `inference_mode` vs gradients
-   enabled: ~0% for ResNet-18, ~13% for the operator-heavy Mamba model.
+3. **Autograd context cost depends on which ops pass through autograd.** `inference_mode` vs
+   gradients enabled: ~0% for ResNet-18, ~8% for ViT-Tiny, only a few percent for
+   MobileNetV3-Small despite its ~41,000 op calls, because its per-channel calls run inside the
+   convolution kernel, below autograd.
 4. **Interleave measurements; don't group them.** An earlier version of this cell ran each
    variant to completion in turn and got the order wrong, because machine drift exceeded the
    effect. Round-robin sampling fixes it. The notebook keeps both versions.
@@ -49,11 +51,12 @@
    releasing ~43 MB of gradient buffers that `set_to_none=False` holds for the whole run.
 6. **Benchmarks don't interpolate.** Per-sample training cost is not monotonic in batch size:
    batch 16 is ~60% worse per epoch than batch 8, with ~1% IQR, so the effect is real.
-7. **MPS is not always faster.** ~4× faster than CPU on ResNet-18, >10× on MobileNetV3-Small
-   (depthwise convs have no fast CPU path), but *slower* on Mamba, whose Python loop of tiny
-   kernels leaves the GPU idle between launches.
-8. **Python costs ~150 ns per operator.** `x + x` takes ~245 ns from C++ vs ~397 ns from
-   Python. Times the 27,000 operator calls per Mamba forward pass, that is most of its runtime.
+7. **The device speedup depends on the model.** MPS vs CPU: ~3× on ResNet-18, ~2× on
+   ViT-Tiny, >10× on MobileNetV3-Small, whose depthwise convs have no fast CPU path. Its
+   CPU time also *grows* with thread count (~31 ms at 1 thread, ~90 ms at 4).
+8. **Python costs ~150 ns per operator.** `x + x` takes ~250 ns from C++ vs ~400 ns from
+   Python: negligible for a few hundred large ops, dominant for thousands of tiny ones issued
+   from a Python loop.
 
 ## References
 

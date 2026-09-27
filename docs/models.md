@@ -1,39 +1,37 @@
 # Model reference
 
-The four architectures used in both notebooks, and what each one demonstrates.
+The three architectures used in both notebooks, and what each one is there to show.
 
 [← README](../README.md) · [self-study guide](self-study-guide.md) · [profiler notebook](profiler-notebook.md) · [benchmark notebook](benchmark-notebook.md)
 
-## Why these four
+## Why these three
 
-Not U-Net or YOLO, the usual tutorial picks. Each model here breaks a *different* naive
-prediction of performance, so together they cover the ways a model can be slow.
+The workshops are about the tools, so the model set is kept small: just enough variety to
+give the profiler and the benchmark something different to find in each.
 
-| Model | Year | Family | Breaks the prediction that… |
+| Model | Year | Family | Role |
 |---|---|---|---|
-| **ResNet-18** | 2015 | Residual CNN | — (the well-behaved baseline) |
-| **MobileNetV3-Small** | 2019 | Efficiency-designed CNN | …fewer FLOPs means less time |
-| **ViT-Tiny** | 2020 | Vision Transformer | …attention is inherently expensive |
-| **VisionMamba-Tiny** | 2024 | Selective state-space model | …fewer parameters means faster |
+| **ResNet-18** | 2015 | Residual CNN | The well-behaved, compute-bound baseline |
+| **MobileNetV3-Small** | 2019 | Efficiency-designed CNN | Overhead-bound: breaks "fewer FLOPs means less time" |
+| **ViT-Tiny** | 2020 | Vision Transformer | Compute-bound; fused vs hand-written attention is the A/B pair |
 
 ## Measured comparison
 
-Batch 4; 224×224 input except VisionMamba-Tiny at 64×64, so its row is **not** directly
-comparable. Apple M3, 4 intra-op threads. Your numbers will differ; the relationships should not.
+Batch 4, 224×224 input for all three. Apple M3, 4 intra-op threads. Your numbers will differ; the relationships should not.
 
 | Model | Params | GFLOPs | Latency | Operator calls | µs per op | Achieved GFLOP/s | Verdict |
 |---|---|---|---|---|---|---|---|
 | ResNet-18 | 11.7 M | 14.5 | 36 ms | 466 | 91.7 | **340** | compute-bound |
 | MobileNetV3-Small | 2.5 M | 0.45 | **91 ms** | **41,372** | 2.2 | **5.0** | overhead-bound |
 | ViT-Tiny | 2.9 M | 4.4 | **10 ms** | 635 | 14.8 | **469** | compute-bound |
-| VisionMamba-Tiny | 0.16 M | 0.08 | 21 ms | 27,010 | 1.0 | **3.0** | overhead-bound |
 
 GFLOPs come from the profiler's `with_flops=True`, which counts only matmul and convolution,
 so they are a lower bound.
 
 What the table shows:
 
-1. **Parameters, FLOPs and latency rank the models in three different orders.**
+1. **Parameters and FLOPs agree on an order; latency does not.** Both put MobileNetV3-Small
+   cheapest, and it is the slowest.
 2. **Achieved GFLOP/s spans two orders of magnitude** on one CPU, in one process, seconds
    apart. It is the most useful column.
 3. **µs per op separates the two failure modes.** Dispatch overhead is ~1–3 µs per operator,
@@ -163,81 +161,49 @@ flowchart TD
 ```
 
 **Profiler view.** `aten::addmm` dominates over ~25 calls, and attention shows up as one fused
-`aten::_scaled_dot_product_flash_attention` kernel rather than matmul–softmax–matmul. Highest
-GFLOP/s of the four.
+`aten::_scaled_dot_product_flash_attention_for_cpu` kernel rather than matmul–softmax–matmul.
+Highest GFLOP/s of the three.
 
 **Lesson.** At this sequence length attention is cheap: one fused kernel plus a few large
 GEMMs make this the fastest model despite 10× the arithmetic of MobileNetV3-Small. Its six
 blocks are identical, so any spread in their measured times is noise, a useful calibration
 when reading per-layer tables.
 
-## VisionMamba-Tiny (2024)
+### Fused vs hand-written attention: the A/B pair
 
-A selective state-space model, written from scratch in `ws_models.py`. Mamba swaps attention for
-a **selective scan**: a linear recurrence with input-dependent parameters, attention-like
-expressiveness at O(L) instead of O(L²) cost, in principle.
+`TinyViT(fused_attn=False)` swaps the fused kernel for textbook attention: `q @ kᵀ`, softmax,
+`@ v`, which materialises a `197 × 197` score matrix per head. Same weights, same output
+(to ~1e-6). Every before/after demo in both notebooks uses this pair: the profile diff and
+`with_stack` (notebook 1, §2.5–2.6), `ab_compare` and the regression gate (notebook 2,
+§3.3, §5.5), and the trace diff (notebook 2, §7.4).
 
-```mermaid
-flowchart TD
-    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
-    X["input<br/>4 x 3 x 64 x 64"] --> PE["patch_embed<br/>Conv2d 8x8, stride 8<br/>64 tokens x 96 dim"]
-    PE --> PS["add positional embedding"]
-    PS --> B0["blocks.0"] --> B1["blocks.1"] --> B2["blocks.2"] --> B3["blocks.3"]
-    B3 --> N["LayerNorm<br/>mean over tokens"]
-    N --> H["head - Linear 96 to 10"] --> Y["logits"]
-```
+| Batch 4 | Hand-written | Fused SDPA |
+|---|---|---|
+| Inference latency | 10.9 ms | 9.0 ms (**~1.2× faster**) |
+| Operator calls | 2,122 | 634 |
+| Training step | 25.4 ms | 23.3 ms |
+| Backward pass | 15.7 ms | 15.0 ms |
+| Training memory allocated | 260 MB | **183 MB** |
 
-Each `MambaBlock` computes `x + S6(LayerNorm(x))`. The `S6` mixer is where the trouble is:
+The diff shows the mechanism: `aten::bmm` and `aten::_softmax` disappear, along with most of
+the copies around them. In training the fused kernel helps the forward pass but barely
+changes the backward, so the speed gain shrinks, while the memory saving stays: the score
+matrices are no longer saved for backward.
 
-```mermaid
-flowchart TD
-    classDef default fill:#ffffff,stroke:#57606a,stroke-width:1px,color:#1f2328;
-    IN["x - B x 64 x 96"] --> IP["in_proj - Linear 96 to 192"]
-    IP --> SP{"split into u and z"}
-    SP -->|"u"| CV["depthwise Conv1d, k=3"] --> SI["SiLU"] --> XP["x_proj - Linear 96 to 33"]
-    XP --> DT["dt_proj + softplus<br/>delta - B x 64 x 96<br/>plus B_t and C_t, 16 states each"]
-    SC["SELECTIVE SCAN - sequential<br/>h = exp of delta_t times A, times h<br/>plus delta_t times B_t times u_t<br/>y_t = h dot C_t"]
-    SI --> SC
-    DT --> SC
-    SC -->|"repeat for t = 0 .. 63, one Python step each"| SC
-    SC --> SK["add D times u - skip connection"]
-    SP -->|"z"| GZ["SiLU"]
-    SK --> GA(("mul"))
-    GZ --> GA
-    GA --> OP["out_proj - Linear 96 to 96"] --> FIN["out"]
-```
-
-**Profiler view.** No single slow operator. The top rows are `aten::mul`, `aten::exp` and the
-like, with hundreds or thousands of calls under 1 µs each. Lowest GFLOP/s of the four.
-
-**Lesson.** A recurrence is sequential: step `t` waits for step `t−1`. Production Mamba uses a
-fused CUDA kernel to keep the loop inside one launch. In pure PyTorch the loop is Python, and
-each of the 64 steps issues several tiny tensor ops.
-
-Two variants compute **identical values**:
-
-| Variant | Approach | Inference | Training |
-|---|---|---|---|
-| `S6Naive` | Textbook: all work inside the timestep loop | baseline | baseline |
-| `S6Fast` | Loop-invariant work hoisted out, computed for all timesteps at once | ~1.35× faster | ~15% **slower**, ~4.5× the memory |
-
-`S6Fast` cuts `aten::exp` from ~260 calls to 8. Under `inference_mode` its large precomputed
-tensors are transient; under autograd they become **saved activations** that live until
-backward. The same change helps inference and hurts training.
-
-> An inference optimisation is not automatically a training optimisation. Materialising large
-> intermediates to save dispatcher calls bets they are short-lived, and autograd voids that bet.
+> The same change can buy speed in inference and mostly memory in training. Profile the mode
+> you ship.
 
 ## What the set shows together
 
 | Observation | Shown by |
 |---|---|
-| Parameters do not predict time | ResNet-18 per layer (§2.2.7); VisionMamba-Tiny per model |
+| Parameters do not predict time | ResNet-18 per layer (§2.2.6) |
 | FLOPs do not predict time | MobileNetV3-Small |
 | Attention is not inherently expensive | ViT-Tiny |
-| One column separates overhead-bound from compute-bound | all four (§2.4) |
+| One column separates overhead-bound from compute-bound | all three (§2.4) |
 | Hardware interacts with architecture | MobileNetV3-Small, MPS vs CPU |
-| Inference and training optimisations can conflict | VisionMamba `S6Fast` |
+| Fusing ops cuts dispatch and memory | ViT-Tiny, fused vs hand-written attention |
+| An optimisation pays off differently in training | ViT-Tiny, fused vs hand-written attention |
 
 ## Where the code lives
 
@@ -245,8 +211,7 @@ backward. The same change helps inference and hurts training.
 |---|---|
 | ResNet-18 | `torchvision.models.resnet18(weights=None)` |
 | MobileNetV3-Small | `torchvision.models.mobilenet_v3_small(weights=None)` |
-| ViT-Tiny | `ws_models.TinyViT`; also inline in notebook 1, §2.2 |
-| VisionMamba-Tiny | `ws_models.TinyVisionMamba`, with `S6Naive` / `S6Fast` mixers |
+| ViT-Tiny | `ws_models.TinyViT(fused_attn=True/False)`; also inline in notebook 1, §2.2 |
 
 `weights=None` builds the architecture with random weights: enough for performance work, and
 no network access needed.
@@ -256,4 +221,3 @@ no network access needed.
 - He et al., *Deep Residual Learning for Image Recognition* (2015) — ResNet
 - Howard et al., *Searching for MobileNetV3* (2019)
 - Dosovitskiy et al., *An Image is Worth 16x16 Words* (2020) — ViT
-- Gu & Dao, *Mamba: Linear-Time Sequence Modeling with Selective State Spaces* (2023)
