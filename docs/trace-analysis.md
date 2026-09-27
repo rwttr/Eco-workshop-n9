@@ -1,140 +1,105 @@
 # Trace analysis: Perfetto, HTA and manual parsing
 
-[← back to README](../README.md) · [self-study guide](self-study-guide.md) · [models](models.md) · [profiler notebook](profiler-notebook.md) · [benchmark notebook](benchmark-notebook.md)
+[← README](../README.md) · [self-study guide](self-study-guide.md) · [models](models.md) · [profiler notebook](profiler-notebook.md) · [benchmark notebook](benchmark-notebook.md)
 
-Both notebooks conclude by writing traces and analysing them. Three approaches are
-available, in increasing order of cost.
+Both notebooks end by writing traces and analysing them in three ways, cheapest first:
 
-| Approach | Requires | Suited to |
+| Approach | Requires | Good for |
 |---|---|---|
-| **Perfetto** or `chrome://tracing` | a browser | Visual inspection: gaps, stalls, ordering, operator density |
-| **Parsing the JSON directly** | `json` and `pandas` | Scripted checks, CI, custom metrics |
+| **Perfetto** / `chrome://tracing` | a browser | Visual inspection: gaps, stalls, ordering, operator density |
+| **Parse the JSON** | `json` + `pandas` | Scripted checks, CI, custom metrics |
 | **Holistic Trace Analysis** | `pip install HolisticTraceAnalysis` | Multi-rank GPU jobs, trace diffing |
 
----
+## What each looks like
 
-## Viewer output
-
-**Perfetto.** The trace from `pytorch_profiler_workshop.ipynb` Part 5, loaded at
-<https://ui.perfetto.dev>. The three `ProfilerStep#N` spans correspond to the `active`
-steps of the profiler `schedule`; `## train_step ##` beneath them is the `record_function`
-label defined in the notebook, and the remaining rows show the operator nesting.
+**Perfetto.** The Part 5 trace from notebook 1 in <https://ui.perfetto.dev>. The three
+`ProfilerStep#N` spans are the `active` steps of the `schedule`; `## train_step ##` is the
+notebook's `record_function` label; the rows below show operator nesting.
 
 ![PyTorch trace in the Perfetto UI](perfetto_overview.png)
 
-Zooming in (**W** to zoom, **A** and **D** to pan) makes the individual operators legible.
-Hovering over a slice reports its exact duration; the example below shows
+Zoom in (**W**/**S** to zoom, **A**/**D** to pan) and hover a slice for its duration, here
 `ConvolutionBackward0` at 2.891 ms.
 
 ![Perfetto zoomed into one ProfilerStep](perfetto_zoom.png)
 
-**Holistic Trace Analysis** is a library rather than a graphical application, so it is used
-from the notebook. `TraceAnalysis` parses the trace into a DataFrame, the symbol table
-decodes the integer operator identifiers back into names, and `TraceDiff.ops_diff` reports
-the differences between two traces. In the example below it correctly identifies the
-`aten::relu` and `aten::add` regression introduced deliberately for the demonstration.
+**HTA** is a library, used from the notebook. `TraceAnalysis` parses the trace into a
+DataFrame, the symbol table maps operator IDs back to names, and `TraceDiff.ops_diff` compares
+two traces. Here it finds the `aten::relu` + `aten::add` regression planted for the demo.
 
 ![Holistic Trace Analysis output](hta_analysis.png)
 
-**Manual parsing.** The same trace processed with `json` and `pandas` alone. The second
-table is a verification step: call counts are identical and self times agree with
-`prof.key_averages()` to within run-to-run variation, using only the file the profiler had
-already written.
+**Manual parsing** with `json` and `pandas` only. The second table verifies it: call counts
+match `prof.key_averages()` exactly, and self times agree within run-to-run variation.
 
 ![Chrome Trace parsed with pandas](chrome_trace_table.png)
 
-> These screenshots are captured from live sessions. They can be regenerated after
-> re-running the notebooks with `python make_screenshots.py`, which requires
-> `pip install playwright && python -m playwright install chromium`.
-> In current versions of Chrome, `chrome://tracing` redirects to the same Perfetto
-> interface, so a single screenshot covers both.
+> Regenerate screenshots after re-running the notebooks with `python make_screenshots.py`
+> (needs `pip install playwright && python -m playwright install chromium`). Current Chrome
+> redirects `chrome://tracing` to Perfetto, so one screenshot covers both.
 
----
+## Gotchas
 
-## A requirement that is easy to overlook
-
-**HTA requires `ProfilerStep#N` markers.** These are present only when the profiling run
-uses a `schedule` *and* writes the file through `tensorboard_trace_handler`. A manual call
-to `prof.export_chrome_trace(...)`, even from a scheduled profiler, does not include them,
-and HTA then fails with a misleading message:
+**HTA needs `ProfilerStep#N` markers.** They are written only when the run uses a `schedule`
+*and* saves through `tensorboard_trace_handler`. A manual `prof.export_chrome_trace(...)`,
+even from a scheduled profiler, omits them, and HTA fails with a misleading error:
 
 ```
 AttributeError: Can only use .str accessor with string values
 ```
 
-This indicates that HTA found no ProfilerStep symbols; it is unrelated to the installed
-version of pandas. `ws_trace.capture_trace()` performs the capture correctly and places
-each trace in its own directory, because `TraceAnalysis(trace_dir=...)` loads every file in
-a directory and treats each as a separate distributed rank.
+This means no ProfilerStep symbols were found; pandas is not at fault.
+`ws_trace.capture_trace()` captures correctly and gives each trace its own directory, because
+`TraceAnalysis(trace_dir=...)` treats every file in a directory as a separate rank.
 
-## Suppressing HTA's logging output
-
-HTA emits a line for every file it processes (`Parsed ... / leaving parse_traces ...`).
-These are written through a logger named `hta` at **WARNING** level, so the conventional
-`logging.disable(logging.INFO)` has no effect. The level of that specific logger must be
-raised instead:
+**Silencing HTA's log lines.** HTA logs `Parsed ... / leaving parse_traces ...` at WARNING on
+the `hta` logger, so `logging.disable(logging.INFO)` does nothing. Instead:
 
 ```python
-logging.getLogger("hta").setLevel(logging.ERROR)     # equivalent to ws_trace.quiet_hta()
+logging.getLogger("hta").setLevel(logging.ERROR)     # same as ws_trace.quiet_hta()
 ```
 
----
+**Trust `diff_counts`, not `diff_duration`.** Call counts are exact and deterministic.
+Durations come from one profiled run, include profiler overhead, and HTA's self-time
+approximation on deeply nested CPU traces can even go negative. Decide *whether* something
+changed with `ab_compare()`, and *what* changed with `diff_counts`.
 
-## Scope: HTA targets GPU workloads
+## HTA on CPU
 
-Most of HTA's principal analyses read CUDA kernel and NCCL events. A CPU-only trace
-contains neither, so those functions return empty results or raise an exception. Both
-notebooks demonstrate this explicitly rather than omitting it.
+Most HTA analyses read CUDA kernel and NCCL events, which a CPU trace lacks. Both notebooks
+show this explicitly.
 
-| HTA call | Behaviour on a CPU-only trace |
+| HTA call | On a CPU-only trace |
 |---|---|
-| `get_profiler_steps()`, `t.get_trace(rank)`, `t.symbol_table` | **Supported** |
-| `TraceDiff.compare_traces()`, `TraceDiff.ops_diff()` | **Supported**, and the principal reason to install the package |
-| `get_temporal_breakdown()`, `get_idle_time_breakdown()` | Requires GPU |
-| `get_gpu_kernel_breakdown()`, `get_cuda_kernel_launch_stats()` | Requires GPU |
-| `get_comm_comp_overlap()`, `critical_path_analysis()` | Requires GPU or multiple GPUs |
+| `get_profiler_steps()`, `t.get_trace(rank)`, `t.symbol_table` | **Works** |
+| `TraceDiff.compare_traces()`, `TraceDiff.ops_diff()` | **Works**, and the main reason to install HTA |
+| `get_temporal_breakdown()`, `get_idle_time_breakdown()` | Needs GPU |
+| `get_gpu_kernel_breakdown()`, `get_cuda_kernel_launch_stats()` | Needs GPU |
+| `get_comm_comp_overlap()`, `critical_path_analysis()` | Needs one or more GPUs |
 
-On CPU, therefore, HTA is worth installing for `TraceDiff`, with Perfetto used for
-everything else. On a single GPU it contributes substantially more, and on multi-GPU
-workloads it has few alternatives. The capture code is identical in all three cases, so
-writing traces in the HTA-compatible form from the outset keeps all options available.
+On CPU, use HTA for `TraceDiff` and Perfetto for everything else. HTA does more on one GPU and
+has few rivals on many. The capture code is the same either way, so capture in the
+HTA-compatible form from the start.
 
-## Interpreting a diff: use `diff_counts`, not `diff_duration`
+## Parsing a trace yourself
 
-Call counts in a trace diff are exact and deterministic. The duration columns are not: they
-derive from a single profiled run, they include the profiler's own overhead, and HTA's
-self-time approximation over a deeply nested CPU trace can produce negative values.
-Determine *whether* something changed with `ab_compare()`, and *what* changed with
-`diff_counts`.
-
----
-
-## Parsing a trace directly
-
-A Chrome Trace is a JSON document containing events with `name`, `ts`, `dur`, `cat`, `pid`
-and `tid` fields. `ws_trace.chrome_trace_ops()` parses one using `pandas` alone and
-reconstructs **self time** by traversing each thread in time order and subtracting each
-child's duration from that of its parent. The profiler notebook verifies its output against
-`prof.key_averages()`, and the two agree to within run-to-run variation. Consequently the
-analysis is not tied to any single viewer, and a performance check can be added to CI
-without introducing a dependency.
+A Chrome Trace is JSON: events with `name`, `ts`, `dur`, `cat`, `pid`, `tid`.
+`ws_trace.chrome_trace_ops()` parses one with `pandas` and rebuilds **self time** by walking
+each thread in time order and subtracting child durations from parents. It matches
+`prof.key_averages()`, so the analysis doesn't depend on any viewer, and you can add a
+dependency-free performance check to CI.
 
 ## Generated traces
 
-Running the notebooks writes `profiler_out/traces/` and `benchmark_out/traces/`. Any
-`.pt.trace.json` file can be opened by dragging it into <https://ui.perfetto.dev>; the
-viewer runs locally in the browser and the file is not uploaded. Navigation uses **W** and
-**S** to zoom, **A** and **D** to pan, a click to inspect an operator, and a drag to select
-a range for aggregate statistics.
+The notebooks write `profiler_out/traces/` and `benchmark_out/traces/`. Drag any
+`.pt.trace.json` into <https://ui.perfetto.dev>; it runs locally and nothing is uploaded.
+Click an operator to inspect it; drag to select a range for aggregate stats.
 
-> Traces of operator-heavy models grow quickly. The naive Mamba scan issues approximately
-> 27,000 events per forward pass, so three profiled steps produce a file of roughly 30 MB.
-> The notebooks use `active=1` for those captures.
-
----
+> Operator-heavy models make big traces: the naive Mamba scan emits ~27,000 events per forward
+> pass, so three steps is ~30 MB. The notebooks use `active=1` for those.
 
 ## References
 
 - [Perfetto UI](https://ui.perfetto.dev), a trace viewer that runs locally in the browser
-- [Holistic Trace Analysis](https://github.com/facebookresearch/HolisticTraceAnalysis) · [documentation](https://hta.readthedocs.io/)
-- [Chrome Trace Event format](https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview), the JSON schema underlying every trace used here
+- [Holistic Trace Analysis](https://github.com/facebookresearch/HolisticTraceAnalysis) · [docs](https://hta.readthedocs.io/)
+- [Chrome Trace Event format](https://docs.google.com/document/d/1CvAClvFfyA5R-PhYUmn5OOQtYMH4h6I0nSsKchNAySU/preview), the JSON schema behind every trace here
